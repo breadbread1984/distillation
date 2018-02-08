@@ -16,7 +16,7 @@
 #include <caffe2/util/net.h>
 #include <caffe2/zoo/mobilenet.h>
 
-#define MOBILEID
+//#define MOBILEID
 
 using namespace std;
 using namespace boost;
@@ -213,31 +213,31 @@ void setDeployNet(NetDef & init, NetDef & predict)
 	MobileID.predict.AddInput("data");
 	//data 150x150x3
 	MobileID.AddConvOps("data","conv1",3,64,1,0,4,0,true);
-	MobileID.AddReluOp("conv1","conv1");
+	MobileID.AddLeakyReluOp("conv1","conv1",0.2);
 	//conv1 146x146x64
 	MobileID.AddMaxPoolOp("conv1","pool1",2,0,2);
 	//pool1 72x72x64
 	MobileID.AddConvOps("pool1","conv2",64,64,1,0,3,0,true);
-	MobileID.AddReluOp("conv2","conv2");
+	MobileID.AddLeakyReluOp("conv2","conv2",0.2);
 	//conv2 69x69x64
 	MobileID.AddMaxPoolOp("conv2","pool2",2,0,2);
 	//pool2 33x33x64
 	MobileID.AddConvOps("pool2","conv3",64,64,1,0,3,0,true);
-	MobileID.AddReluOp("conv3","conv3");
+	MobileID.AddLeakyReluOp("conv3","conv3",0.2);
 	//conv3 30x30x64
 	MobileID.AddMaxPoolOp("conv3","pool3",2,0,2);
 	//pool3 14x14x64
 	MobileID.AddConvOps("pool3","conv4",64,10,1,0,1,0,true);
-	MobileID.AddReluOp("conv4","conv4");
+	MobileID.AddLeakyReluOp("conv4","conv4",0.2);
 	//conv4 14x14x10
 	MobileID.AddFcOps("conv4","ip1",2560,500,true);
-	MobileID.AddReluOp("ip1","ip1");
+	MobileID.AddLeakyReluOp("ip1","ip1",0.2);
 	//ip1 500
 	MobileID.AddFcOps("ip1","ip2",500,500,true);
-	MobileID.AddReluOp("ip2","ip2");
+	MobileID.AddLeakyReluOp("ip2","ip2",0.2);
 	//ip2 500
 	MobileID.AddFcOps("ip2","ip3",500,128,true);
-	MobileID.AddReluOp("ip3","output");
+	MobileID.AddLeakyReluOp("ip3","output",0.2);
 	//3)output to bptxt
 	MobileID.init.WriteText("models/MobileID_init.pbtxt");
 	MobileID.predict.WriteText("models/MobileID_deploy.pbtxt");

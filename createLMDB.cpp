@@ -3,9 +3,14 @@
 #include <string>
 #include <sstream>
 #include <vector>
+#include <algorithm>
+#include <chrono>
 #include <boost/filesystem.hpp>
 #include <boost/regex.hpp>
 #include <boost/program_options.hpp>
+#include <boost/thread/thread.hpp>
+#include <boost/thread/mutex.hpp>
+#include <boost/shared_ptr.hpp>
 #include <dlib/dnn.h>
 #include <dlib/image_io.h>
 #include <dlib/image_processing/frontal_face_detector.h>
@@ -16,6 +21,8 @@
 #include <caffe2/core/db.h>
 #include <caffe2/core/init.h>
 #include <caffe2/proto/caffe2.pb.h>
+
+#define NUM 40
 
 using namespace std;
 using namespace boost;
@@ -52,6 +59,7 @@ using anet_type = dlib::loss_metric<dlib::fc_no_bias<128,dlib::avg_pool_everythi
                             dlib::input_rgb_image_sized<150>
                             >>>>>>>>>>>>;
 
+void makeList(path dir,vector<string> & filelist);
 void write2db(path dir,int & count,TensorProtos & protos,TensorProto * input,TensorProto * output, unique_ptr<db::Transaction> & transaction,anet_type & net,dlib::shape_predictor & sp,dlib::frontal_face_detector & detector);
 vector<dlib::matrix<dlib::rgb_pixel>> jitter_image(const dlib::matrix<dlib::rgb_pixel>& img);
 
@@ -82,89 +90,123 @@ int main(int argc,char ** argv)
 		return EXIT_FAILURE;
 	}
 	
-	anet_type net;
-	dlib::shape_predictor sp;
-	dlib::deserialize("models/dlib_face_recognition_resnet_model_v1.dat") >> net;
-	dlib::deserialize("models/shape_predictor_68_face_landmarks.dat") >> sp;
-	dlib::frontal_face_detector detector = dlib::get_frontal_face_detector();
+	anet_type net[NUM];
+	dlib::shape_predictor sp[NUM];
+	dlib::frontal_face_detector detector[NUM];
+	for(int i = 0 ; i < NUM ; i++) {
+		dlib::deserialize("models/dlib_face_recognition_resnet_model_v1.dat") >> net[i];
+		dlib::deserialize("models/shape_predictor_68_face_landmarks.dat") >> sp[i];
+		detector[i] = dlib::get_frontal_face_detector();
+	}
 	
 	unique_ptr<db::DB> db(db::CreateDB("lmdb",outputdir,db::NEW));
-	unique_ptr<db::Transaction> transaction(db->NewTransaction());
-	TensorProtos protos;
-	TensorProto * img = protos.add_protos();
-	img->set_data_type(TensorProto::FLOAT);
-	img->add_dims(3);
-	img->add_dims(150);
-	img->add_dims(150);
-	TensorProto * feature = protos.add_protos();
-	feature->set_data_type(TensorProto::FLOAT);
-	feature->add_dims(128);
 	int count = 0;
-	write2db(inputdir,count,protos,img,feature,transaction,net,sp,detector);
-	if(count) transaction->Commit();
+	//create dataset list
+	cout<<"1)making image list"<<endl;
+	vector<string> filelist;
+	makeList(inputdir,filelist);
+	unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
+	shuffle(filelist.begin(),filelist.end(),default_random_engine(seed));
+	cout<<"there are "<<filelist.size()<<" images found"<<endl;
+	//write to lmdb
+	cout<<"2)writing to lmdb"<<endl;
+	vector<boost::shared_ptr<boost::thread> > handler;
+	boost::mutex mutex;
+	for(auto & file : filelist) {
+		handler.push_back(boost::shared_ptr<boost::thread>(
+			new boost::thread(boost::bind<void>(
+				[&](string filename,int index) -> void {
+					//1)detect faces
+					Mat img = imread(filename);
+					if(true == img.empty()) {
+						cout<<filename<<" cant be opened!"<<endl;
+						return;
+					}
+					dlib::cv_image<dlib::rgb_pixel> cimg(img);
+					vector<dlib::rectangle> faces = detector[index](cimg);
+					if(0 == faces.size()) {
+						cout<<filename<<" has no face"<<endl;
+						return;
+					}
+					dlib::rectangle & face = faces.front();
+					//2)extract feature
+					dlib::full_object_detection shape = sp[index](cimg,face);
+					dlib::matrix<dlib::rgb_pixel> face_chip;
+					dlib::extract_image_chip(cimg,dlib::get_face_chip_details(shape,150,0.25),face_chip);
+					dlib::matrix<float,0,1> fv = mean(mat(net[index](jitter_image(face_chip))));
+					//3)open lmdb (transaction can only be used in thread which created it)
+					unique_ptr<db::Transaction> transaction(db->NewTransaction());
+					TensorProtos protos;
+					TensorProto * input = protos.add_protos();
+					input->set_data_type(TensorProto::FLOAT);
+					input->add_dims(3);
+					input->add_dims(150);
+					input->add_dims(150);
+					TensorProto * output = protos.add_protos();
+					output->set_data_type(TensorProto::FLOAT);
+					output->add_dims(128);
+					//4)write to lmdb
+					input->clear_float_data();
+					output->clear_float_data();
+					for(int c = 0 ; c < 3 ; c++)
+						for(int h = 0 ; h < face_chip.nr() ; h++)
+							for(int w = 0 ; w < face_chip.nc() ; w++) {
+								switch(c) {
+									case 0:
+										input->add_float_data(face_chip(h,w).blue);
+										break;
+									case 1:
+										input->add_float_data(face_chip(h,w).green);
+										break;
+									case 2:
+										input->add_float_data(face_chip(h,w).red);
+										break;
+									default:
+										assert(0);
+								}
+							}
+					for(auto it = fv.begin() ; it != fv.end() ; it++)
+						output->add_float_data(*it);
+					string value;
+					protos.SerializeToString(&value);
+					stringstream sstr;
+					{
+						boost::mutex::scoped_lock scoped_lock(mutex);
+						sstr<<setw(8)<<setfill('0')<<count++;
+					}
+					transaction->Put(sstr.str(),value);
+					transaction->Commit();
+					cout<<"has written "<<count<<" samples"<<endl;
+					return;
+				},file,handler.size()
+			))
+		));
+		if(NUM <= handler.size()) {
+#ifndef NDEBUG
+			cout<<"waiting for join"<<endl;
+#endif
+			for(auto & h : handler) h->join();
+#ifndef NDEBUG
+			cout<<"all joint"<<endl;
+#endif
+			handler.clear();
+		}
+	}
+	if(handler.size()) {
+		for(auto & h : handler) h->join();
+		handler.clear();
+	}
 	cout<<"共有"<<count<<"合成样本！"<<endl;
 	
 	return EXIT_SUCCESS;
 }
 
-void write2db(path dir,int & count,TensorProtos & protos,TensorProto * input,TensorProto * output, unique_ptr<db::Transaction> & transaction,anet_type & net,dlib::shape_predictor & sp,dlib::frontal_face_detector & detector)
+void makeList(path dir,vector<string> & filelist)
 {
 	regex expr(".*\\.(png|PNG|jpg|JPG|jpeg|JPEG)");
 	for(directory_iterator itr(dir) ; itr != directory_iterator() ; itr++) {
-		if(is_directory(itr->path())) write2db(itr->path(),count,protos,input,output,transaction,net,sp,detector);
-		else {
-			//1)detect faces
-			string name = itr->path().filename().string();
-			if(false == regex_match(name,expr)) {
-				cout<<itr->path().string()<<" is not an image"<<endl;
-				continue;
-			}
-			Mat img = imread(itr->path().string());
-			if(true == img.empty()) {
-				cout<<itr->path().string()<<" cant be opened!"<<endl;
-				continue;
-			}
-			dlib::cv_image<dlib::rgb_pixel> cimg(img);
-			vector<dlib::rectangle> faces = detector(cimg);
-			if(0 == faces.size()) {
-				cout<<itr->path().string()<<" has no face"<<endl;
-				continue;
-			}
-			dlib::rectangle & face = faces.front();
-			//2)extract feature
-			dlib::full_object_detection shape = sp(cimg,face);
-			dlib::matrix<dlib::rgb_pixel> face_chip;
-			dlib::extract_image_chip(cimg,dlib::get_face_chip_details(shape,150,0.25),face_chip);
-			dlib::matrix<float,0,1> fv = mean(mat(net(jitter_image(face_chip))));
-			//3)write to lmdb
-			input->clear_float_data();
-			output->clear_float_data();
-			for(int c = 0 ; c < 3 ; c++)
-				for(int h = 0 ; h < face_chip.nr() ; h++)
-					for(int w = 0 ; w < face_chip.nc() ; w++) {
-						switch(c) {
-							case 0:
-								input->add_float_data(face_chip(h,w).blue);
-								break;
-							case 1:
-								input->add_float_data(face_chip(h,w).green);
-								break;
-							case 2:
-								input->add_float_data(face_chip(h,w).red);
-								break;
-							default:
-								assert(0);
-						}
-					}
-			for(auto it = fv.begin() ; it != fv.end() ; it++)
-				output->add_float_data(*it);
-			string value;
-			protos.SerializeToString(&value);
-			stringstream sstr;
-			sstr<<setw(8)<<setfill('0')<<count;
-			transaction->Put(sstr.str(),value);
-			if(++count % 1000 == 0) transaction->Commit();
-		}
+		if(is_directory(itr->path())) makeList(itr->path(),filelist);
+		else if(regex_match(itr->path().filename().string(),expr)) filelist.push_back(itr->path().string());
 	}
 }
 

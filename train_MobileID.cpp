@@ -77,31 +77,31 @@ void setupTrainNet(NetDef & init, NetDef & predict)
 	MobileID.AddTensorProtosDbInputOp("db","data","feature",BATCHSIZE);
 	//data 150x150x3
 	MobileID.AddConvOps("data","conv1",3,64,1,0,4);
-	MobileID.AddReluOp("conv1","conv1");
+	MobileID.AddLeakyReluOp("conv1","conv1",0.2);
 	//conv1 146x146x64
 	MobileID.AddMaxPoolOp("conv1","pool1",2,0,2);
 	//pool1 72x72x64
 	MobileID.AddConvOps("pool1","conv2",64,64,1,0,3);
-	MobileID.AddReluOp("conv2","conv2");
+	MobileID.AddLeakyReluOp("conv2","conv2",0.2);
 	//conv2 69x69x64
 	MobileID.AddMaxPoolOp("conv2","pool2",2,0,2);
 	//pool2 33x33x64
 	MobileID.AddConvOps("pool2","conv3",64,64,1,0,3);
-	MobileID.AddReluOp("conv3","conv3");
+	MobileID.AddLeakyReluOp("conv3","conv3",0.2);
 	//conv3 30x30x64
 	MobileID.AddMaxPoolOp("conv3","pool3",2,0,2);
 	//pool3 14x14x64
 	MobileID.AddConvOps("pool3","conv4",64,10,1,0,1);
-	MobileID.AddReluOp("conv4","conv4");
+	MobileID.AddLeakyReluOp("conv4","conv4",0.2);
 	//conv4 14x14x10
 	MobileID.AddFcOps("conv4","ip1",2560,500);
-	MobileID.AddReluOp("ip1","ip1");
+	MobileID.AddLeakyReluOp("ip1","ip1",0.2);
 	//ip1 500
 	MobileID.AddFcOps("ip1","ip2",500,500);
-	MobileID.AddReluOp("ip2","ip2");
+	MobileID.AddLeakyReluOp("ip2","ip2",0.2);
 	//ip2 500
 	MobileID.AddFcOps("ip2","ip3",500,128);
-	MobileID.AddReluOp("ip3","output");
+	MobileID.AddLeakyReluOp("ip3","output",0.2);
 	//output 128
 	MobileID.AddSquaredL2DistanceOp({"output","feature"},"loss");	
 	MobileID.AddConstantFillWithOp(1.0, "loss", "loss_grad");
@@ -114,7 +114,8 @@ void setupTrainNet(NetDef & init, NetDef & predict)
 	string optimizer = "adam";
 	MobileID.AddOptimizerOps(optimizer);
 	//输出网络结构
-	MobileID.predict.WriteText("models/MobileID_train.pbtxt");
+	MobileID.predict.WriteText("models/MobileID_train_predict.pbtxt");
+	MobileID.init.WriteText("models/MobileID_train_init.pbtxt");
 }
 
 void setupSaveNet(NetDef & save)

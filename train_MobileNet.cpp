@@ -12,7 +12,7 @@
 #define NDEBUG
 #define WITH_CUDA
 #define TRAINSIZE 350418
-#define BATCHSIZE 60
+#define BATCHSIZE 30
 
 using namespace std;
 using namespace boost::filesystem;
@@ -110,7 +110,8 @@ void setupTrainNet(NetDef & init, NetDef & predict)
 	string optimizer = "adam";
 	MobileNet.AddOptimizerOps(optimizer);
 	//输出网络结构
-	MobileNet.predict.WriteText("models/MobileNet_train.pbtxt");
+	MobileNet.init.WriteText("models/MobileNet_train_init.pbtxt");
+	MobileNet.predict.WriteText("models/MobileNet_train_predict.pbtxt");
 }
 
 void setupSaveNet(NetDef & save)

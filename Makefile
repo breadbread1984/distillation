@@ -10,7 +10,7 @@ LIBS=-lboost_program_options \
 -lboost_filesystem -lboost_system -lboost_thread -lboost_regex -lpthread
 OBJS=$(patsubst %.cpp,%.o,$(wildcard *.cpp))
 
-all: createLMDB train_MobileID train_MobileNet crop roc roc2
+all: createLMDB train_MobileID train_MobileNet
 
 createLMDB: createLMDB.o
 	$(CXX) $^ $(LIBS) -o ${@}
@@ -21,14 +21,5 @@ train_MobileID: train_MobileID.o
 train_MobileNet: train_MobileNet.o
 	$(CXX) $^ $(LIBS) -o ${@}
 
-crop: crop.o
-	$(CXX) $^ $(LIBS) -o ${@}
-
-roc: roc.o
-	$(CXX) $^ $(LIBS) -o ${@}
-
-roc2: roc2.o
-	$(CXX) $^ $(LIBS) -o ${@}
-
 clean:
-	$(RM) createLMDB train_MobileID train_MobileNet crop roc roc2 $(OBJS)
+	$(RM) createLMDB train_MobileID train_MobileNet $(OBJS)
